@@ -14,6 +14,15 @@ from fuel_finder.config import (
 load_dotenv()
 
 
+def raise_for_status(response):
+    """Like response.raise_for_status(), but the error also shows the start of the response body (why it failed)."""
+    try:
+        response.raise_for_status()
+    except requests.HTTPError as error:
+        body = " ".join(response.text[:400].split())
+        raise requests.HTTPError(f"{error} | response: {body}", response=response) from None
+
+
 class FuelFinderClient:
     """Small wrapper around the Fuel Finder API auth and pagination rules."""
 
@@ -54,7 +63,7 @@ class FuelFinderClient:
             headers={"Accept": "application/json", "Content-Type": "application/json"},
             timeout=20,
         )
-        response.raise_for_status()
+        raise_for_status(response)
         token_response = response.json()
         data = token_response.get("data", token_response)
 
@@ -76,7 +85,7 @@ class FuelFinderClient:
             params=params,
             timeout=30,
         )
-        response.raise_for_status()
+        raise_for_status(response)
         return response.json()
 
     def get_all_batches(self, path, params=None):
