@@ -1,0 +1,57 @@
+name: collect
+
+# Pull a UK Fuel Finder price snapshot every 30 minutes and park it, gzipped, in a private Cloudflare R2 bucket.
+# A separate private repo syncs the snapshots down and deletes them from R2.
+# GitHub cron is best-effort: runs can start late or occasionally be skipped. Odd minutes avoid the busy :00 slot.
+#
+# Safety for a public repo: only the schedule and a manual start can trigger this (never a pull request), so
+# secrets are never exposed to code from forks. The pull job can only read the repo.
+on:
+  schedule:
+    - cron: "7,37 * * * *"   # pull, every 30 minutes
+    - cron: "23 4 * * 1"     # heartbeat, Mondays
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: collect-${{ github.event.schedule || 'manual' }}
+  cancel-in-progress: false
+
+jobs:
+  pull:
+    if: github.event.schedule != '23 4 * * 1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install --disable-pip-version-check -r requirements.txt
+      - run: python scripts/pull_snapshot_to_r2.py
+        env:
+          FUEL_FINDER_CLIENT_ID: ${{ secrets.FUEL_FINDER_CLIENT_ID }}
+          FUEL_FINDER_CLIENT_SECRET: ${{ secrets.FUEL_FINDER_CLIENT_SECRET }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+
+  # GitHub turns off scheduled workflows in a public repo after 60 days with no activity. A weekly commit prevents it.
+  heartbeat:
+    if: github.event.schedule == '23 4 * * 1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          echo "Last heartbeat: $(date -u +%Y-%m-%dT%H:%M:%SZ)" > HEARTBEAT.md
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "heartbeat"
+          git push

@@ -1,0 +1,2 @@
+"""Fuel Finder price collector."""
+
